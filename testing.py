@@ -96,7 +96,7 @@ class TestDHCPSpoof(unittest.TestCase):
 
         mac, ip = '11:22:33:44:55:66', '192.168.1.100'
 
-        offer = build_offer_message(discover, mac, ip, '2.2.2.2')
+        offer = build_offer_message(discover, mac, ip, '2.2.2.2', '8.8.8.8')
 
         # Check MACs
         self.assertEqual(offer[Ether].dst, discover[Ether].src)
@@ -139,7 +139,7 @@ class TestDHCPSpoof(unittest.TestCase):
         mac, ip = '11:22:33:44:55:66', '192.168.1.100'
      
         req = get_request()
-        ack = build_acknowledge_message(req, mac, ip, '192.168.1.127')
+        ack = build_acknowledge_message(req, mac, ip, '192.168.1.127', '8.8.8.8')
 
         # Check MACs
         self.assertEqual(req[Ether].src, ack[Ether].dst)
