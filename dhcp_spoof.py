@@ -196,7 +196,6 @@ def build_acknowledge_message(request, my_mac, my_ip, assigned_ip):
     frame[DHCP].options = opts
 
     return frame
-    
 
 
 def gen_request_filter(xid, src_mac):
@@ -213,14 +212,23 @@ def handle_DHCP_discover(pack):
     if pack[Ether].src == 'd8:f8:83:90:de:d1':
         print('=-=-=-=- Sending Offer =-=-=-=-')
 
-        current_offer = build_offer_message(pack, my_mac, my_ip, '192.168.1.127')
+        # TODO: Check for free ip (in different function)
+        assigned_ip = '192.168.1.127'
+
+        # Send offer
+        current_offer = build_offer_message(pack, my_mac, my_ip, assigned_ip)
         sendp(current_offer)
 
         # Build filter func
         req_filt = gen_request_filter(pack[BOOTP].xid, pack[Ether].src)
 
         # Sniff for request
-        request = sniff(lfilter=req_filt, count=1, timeout=500, verbose=0)[0]
+        request = sniff(lfilter=req_filt, count=1, timeout=500)[0]
+
+        # Send acknowledge
+        print('=-=-=-=- Sending Acknowledge =-=-=-=-')
+        ack = build_acknowledge_message(request, my_mac, my_ip, assigned_ip)
+        sendp(ack)
 
 
 def main():
