@@ -43,10 +43,10 @@ dhcp_spoof
 
 Network PCAP on wireshark
 
-![wireshark](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/proof.png)
+![wireshark](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/wireshark.png)
 
 
 
 Malicious network configuration on victim
 
-![proof](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/wireshark.png)
+![proof](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/proof.png)
