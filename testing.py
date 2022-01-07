@@ -13,6 +13,8 @@ import re
 import socket
 
 # Module imports
+from dhcp_spoof import import_scapy
+import_scapy()
 from dhcp_spoof import (build_offer_message, is_discover_filter, mac_to_bytes, build_acknowledge_message)
 
 def get_discover():
