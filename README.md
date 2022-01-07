@@ -16,10 +16,19 @@ tacker can perform man-in-the-middle attack on the default gateway and the victi
 
 ## Usage 
 
-dhcp-spoof attacker_mac attacker_ip [flags]
+./dhcp-spoof attacker_mac attacker_ip unused_ip [flags]
 
-Flags:
-  h - help
+Arguments:
+
+    attacker_mac - MAC address of attacker
+    attacker_ip - IP to set as default gateway
+    unused_ip - IP to assign for victim
+
+Flags: 
+
+      -h,  help
+      -t,  target     - MAC address of specific victim you want to attack
+      --dns,          - redirect victim DNS queries to this machine
 
 ## Dependencies
 
