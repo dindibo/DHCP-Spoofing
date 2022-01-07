@@ -41,6 +41,10 @@ Flags:
     DHCP Starving starving is when an attacker floods the DHCP Server with forged DHCP Messages, with fake MAC address to empty the
     IP Pool allocated making the legitimate DHCP server useless. The attacker can then run the DHCP Spoofing and allocate IP addreses
     on the fake IPs, this way the attacker eliminates the race condition between him and the legitimate server.
+    
+* Multi-threading
+
+    Fire up a thread for each forged DHCP packet sent
 
 ## POC
 
