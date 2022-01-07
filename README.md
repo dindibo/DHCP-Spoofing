@@ -37,16 +37,16 @@ Flags:
 
 dhcp_spoof
 
-![](.\imgs\dhcp-poc.png)
+![](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/dhcp-poc.png)
 
 
 
 Network PCAP on wireshark
 
-![wireshark](.\imgs\wireshark.png)
+![wireshark](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/proof.png)
 
 
 
 Malicious network configuration on victim
 
-![proof](.\imgs\proof.png)
+![proof](https://raw.githubusercontent.com/dindibo/DHCP-Spoofing/main/imgs/wireshark.png)
