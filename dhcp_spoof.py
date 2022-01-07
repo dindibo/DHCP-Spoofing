@@ -15,6 +15,7 @@ import socket
 my_mac=None
 my_ip=None
 assign_ip=None
+target_mac=''
 
 # Constants
 
@@ -212,12 +213,14 @@ def gen_request_filter(xid, src_mac):
 
 # Prints an example discovery
 def handle_DHCP_discover(pack):
-    global my_mac, my_ip
+    global my_mac, my_ip, target_mac
    
     print('Got Discover from ----> ', end='')
     print(pack[Ether].src)
 
-    if pack[Ether].src == 'd8:f8:83:90:de:d1':
+    do_packet = target_mac == '' or target_mac == pack[Ether].src
+
+    if do_packet:
         print('=-=-=-=- Sending Offer =-=-=-=-')
 
         # TODO: Check for free ip (in different function)
@@ -230,23 +233,33 @@ def handle_DHCP_discover(pack):
         req_filt = gen_request_filter(pack[BOOTP].xid, pack[Ether].src)
 
         # Sniff for request
-        request = sniff(lfilter=req_filt, count=1, timeout=500)[0]
+        request = sniff(lfilter=req_filt, count=1, timeout=1)[0]
 
         # Send acknowledge
         print('=-=-=-=- Sending Acknowledge =-=-=-=-')
         ack = build_acknowledge_message(request, my_mac, my_ip, assign_ip)
         sendp(ack)
 
+        exit(0)
+
 
 def main():
-    global my_mac, my_ip, assign_ip
+    global my_mac, my_ip, assign_ip, target_mac
 
-    if len(sys.argv) != 4 or '-h' in sys.argv:
+    if len(sys.argv) < 4 or '-h' in sys.argv:
         print_help()
     else:
         my_mac, my_ip = sys.argv[1], sys.argv[2]
 
         assign_ip = sys.argv[3]
+
+        # Check for specific target
+        if '-t' in argv:
+            try:
+                target_mac = argv[argv.index('-t') + 1]
+            except:
+                print('Target not specified')
+                exit(1)
 
         if not(is_mac_valid(my_mac) and is_ip_valid(my_ip) and is_ip_valid(assign_ip)):
             print('Invalid IP or MAC')
