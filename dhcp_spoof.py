@@ -82,6 +82,7 @@ def print_help():
     print('Flags: ')
     print('\t-h,  help')
 
+
 def build_offer_message(discover, my_mac, my_ip, free_ip):
     to_mac = discover[Ether].src
 
@@ -127,10 +128,79 @@ def build_offer_message(discover, my_mac, my_ip, free_ip):
             ('domain', b'lan'),\
             'end']\
 
-    # Set options
+    # Write options
     frame[DHCP].options = opts
 
     return frame
+
+
+def build_acknowledge_message(request, my_mac, my_ip, assigned_ip):
+    to_mac = request[Ether].src
+
+    # Add Ether
+    frame = Ether(src=my_mac, dst=to_mac)
+
+    # Add IP with the free address
+    frame /= IP(src=my_ip, dst=assigned_ip)
+
+    # Add Transportation layer
+    frame /= UDP(sport=DHCP_SERVER_PORT, dport=DHCP_CLIENT_PORT)
+
+    # Add legacy BOOTP layer
+    frame /= BOOTP()
+
+    # Change BOOTP options
+    frame[BOOTP].op = DHCP_FLAGS.BOOTREPLY
+    frame[BOOTP].htype = DHCP_FLAGS.HTYPE_DEF
+    frame[BOOTP].hlen = DHCP_FLAGS.HTYPE_LEN_DEF
+    frame[BOOTP].xid = request[BOOTP].xid
+    frame[BOOTP].secs = 0
+    frame[BOOTP].flags = None
+    frame[BOOTP].ciaddr = '0.0.0.0'
+    frame[BOOTP].yiaddr = assigned_ip
+    frame[BOOTP].siaddr = my_ip
+    frame[BOOTP].giaddr = '0.0.0.0'
+    frame[BOOTP].chaddr = mac_to_bytes(request[Ether].src)
+
+    # Add DHCP Extension
+    frame /= DHCP()
+
+    # Change DHCP fields
+    req_opts = request[DHCP].options
+    comp_name = ''
+
+    for x in req_opts:
+        if x[0].lower() == 'client_fqdn':
+            comp_name = x[1]
+            break
+    
+    if comp_name == '':
+        return None
+
+    # TODO: Check if needed to tuncate non-printable charecters for comp_name
+    
+    opts = [('message-type', 5),\
+            ('server_id', my_ip),\
+            ('lease_time', 43200),\
+            ('renewal_time', 21600),\
+            ('rebinding_time', 37800),\
+            ('subnet_mask', '255.255.255.0'),\
+            ('broadcast_address', '192.168.1.255'),\
+            ('router', my_ip),\
+            ('name_server', my_ip),\
+            ('domain', b'lan'),\
+            ('client_FQDN', comp_name),\
+            'end']
+
+    # Write options
+    frame[DHCP].options = opts
+
+    return frame
+    
+
+
+def gen_request_filter(xid, src_mac):
+    return lambda pack: pack.haslayer(BOOTP) and pack[BOOTP].xid == xid and pack.haslayer(Ether) and pack[Ether].src == src_mac
 
 
 # Prints an example discovery
@@ -144,9 +214,13 @@ def handle_DHCP_discover(pack):
         print('=-=-=-=- Sending Offer =-=-=-=-')
 
         current_offer = build_offer_message(pack, my_mac, my_ip, '192.168.1.127')
+        sendp(current_offer)
 
-        srp1(current_offer)[0].show()
-        exit(0)
+        # Build filter func
+        req_filt = gen_request_filter(pack[BOOTP].xid, pack[Ether].src)
+
+        # Sniff for request
+        request = sniff(lfilter=req_filt, count=1, timeout=500, verbose=0)[0]
 
 
 def main():
