@@ -30,6 +30,7 @@ Flags:
       -h,  help
       -t,  target     - MAC address of specific victim you want to attack
       --dns,          - redirect victim DNS queries to this machine
+      -i,             - inspect DHCP Discover without sending anything on net
 
 ## Dependencies
 
