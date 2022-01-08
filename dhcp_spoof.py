@@ -39,8 +39,8 @@ class Spoofer(metaclass=Singleton):
 
     def validate(self):
         return is_ip_valid(self.my_ip) and is_ip_valid(self.assign_ip) \
-            and is_mac_valid(self.my_mac) and (not hasattr(self, 'target_mac') or is_mac_valid(self.target_mac))\
-                and (not hasattr(self, 'dns_server') or is_ip_valid(self.dns_server))
+            and is_mac_valid(self.my_mac) and ((self.target_mac == '') or is_mac_valid(self.target_mac))\
+                and ((self.dns_server == '') or is_ip_valid(self.dns_server))
 
     def is_trigger(self, discover_mac):
         return self.target_mac == '' or self.target_mac == discover_mac
@@ -254,7 +254,13 @@ def handle_DHCP_discover(pack):
         req_filt = gen_request_filter(pack[BOOTP].xid, pack[Ether].src)
 
         # Sniff for request
-        request = sniff(lfilter=req_filt, count=1, timeout=3)[0]
+        request = sniff(lfilter=req_filt, count=1, timeout=4)
+
+        if(len(list(request)) == 0):
+            print('Missed Request packet')
+            return
+        
+        request = request[0]
 
         # Send acknowledge
         print('=-=-=-=- Sending Acknowledge =-=-=-=-')
@@ -270,8 +276,7 @@ def main():
         print_help()
     else:
         spoof = Spoofer()
-        spoof.my_mac, spoof.my_ip = sys.argv[1], sys.argv[2]
-        spoof.assign_ip = sys.argv[3]
+        spoof.setup(sys.argv[1], sys.argv[2], sys.argv[3])
 
         if not spoof.validate():
             print('Invalid IP or MAC')
@@ -298,9 +303,9 @@ def main():
                 exit(1)
         else:
             try:
-                dns_server = get_my_default_gateway()
+                spoof.dns_server = get_my_default_gateway()
             except:
-                dns_server = '8.8.8.8'
+                spoof.dns_server = '8.8.8.8'
 
         import_scapy()
 
