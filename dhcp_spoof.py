@@ -13,6 +13,9 @@ import re
 import socket
 
 
+# Globals
+INSPECT_MODE = False
+
 # Constants
 
 IP_BROADCAST        = '255.255.255.255'
@@ -231,6 +234,8 @@ def print_help():
     print('\t-t,  target\t- MAC address of specific victim you want to attack')
     print('')
     print('\t--dns,\t\t- redirect victim DNS queries to this machine')
+    print('')
+    print('\t-i,\t\t- inspect DHCP Discover without sending anything on net')
 
 def gen_request_filter(xid, src_mac):
     return lambda pack: pack.haslayer(BOOTP) and pack[BOOTP].xid == xid and pack.haslayer(Ether) and pack[Ether].src == src_mac
@@ -238,10 +243,15 @@ def gen_request_filter(xid, src_mac):
 
 # Prints an example discovery
 def handle_DHCP_discover(pack):
+    global INSPECT_MODE
+
     spoof = Spoofer()
    
     print('Got Discover from ----> ', end='')
     print(pack[Ether].src)
+
+    if INSPECT_MODE:
+        return
 
     if spoof.is_trigger(pack[Ether].src):
         print('=-=-=-=- Sending Offer =-=-=-=-')
@@ -272,6 +282,8 @@ def handle_DHCP_discover(pack):
 
 
 def main():
+    global INSPECT_MODE
+
     if len(sys.argv) < 4 or '-h' in sys.argv:
         print_help()
     else:
@@ -306,6 +318,9 @@ def main():
                 spoof.dns_server = get_my_default_gateway()
             except:
                 spoof.dns_server = '8.8.8.8'
+
+        if '-i' in argv:
+            INSPECT_MODE = True
 
         import_scapy()
 
